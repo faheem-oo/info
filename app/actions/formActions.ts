@@ -1,11 +1,6 @@
 'use server';
 
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+import { sql } from '@vercel/postgres';
 
 export async function submitEarlyAccess(formData: FormData) {
   const feedback = formData.get('feedback') as string;
@@ -15,24 +10,13 @@ export async function submitEarlyAccess(formData: FormData) {
   }
 
   try {
-    const { data, error } = await supabase
-      .from('feedback')
-      .insert([
-        {
-          feedback,
-          created_at: new Date().toISOString(),
-        },
-      ]);
+    const result = await sql`
+      INSERT INTO feedback (feedback, created_at)
+      VALUES (${feedback}, NOW())
+      RETURNING id, feedback, created_at;
+    `;
 
-    if (error) {
-      console.error('Supabase insert error:', error);
-      return {
-        success: false,
-        message: error.message || 'Failed to submit feedback.',
-      };
-    }
-
-    console.log('Feedback submitted to Supabase:', data);
+    console.log('Feedback submitted to Vercel Postgres:', result.rows[0]);
     return {
       success: true,
       message: "Thank you for your feedback! We appreciate your input."
@@ -46,32 +30,24 @@ export async function submitEarlyAccess(formData: FormData) {
   }
 }
 
-// Fetch stored feedback entries from Supabase
+// Fetch stored feedback entries from Vercel Postgres
 export async function fetchFeedbackEntries() {
   try {
-    const { data, error } = await supabase
-      .from('feedback')
-      .select('created_at, feedback')
-      .order('created_at', { ascending: false })
-      .limit(200);
+    const result = await sql`
+      SELECT created_at, feedback
+      FROM feedback
+      ORDER BY created_at DESC
+      LIMIT 200;
+    `;
 
-    if (error) {
-      console.error('Supabase fetch error:', error);
-      return {
-        success: false,
-        items: [],
-        message: error.message || 'Failed to load feedback.',
-      };
-    }
-
-    const items = (data || []).map((item: any) => ({
+    const items = (result.rows || []).map((item: any) => ({
       timestamp: item.created_at,
       feedback: item.feedback,
     }));
 
     return {
       success: true,
-      source: 'supabase',
+      source: 'vercel-postgres',
       items,
     };
   } catch (error: any) {
