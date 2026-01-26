@@ -1,25 +1,43 @@
 "use server";
-import fs from "node:fs/promises";
-import path from "node:path";
+import { google } from "googleapis";
 
 const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || "";
 const AIRTABLE_API_TOKEN = process.env.AIRTABLE_API_TOKEN || "";
 const AIRTABLE_TABLE_NAME = process.env.AIRTABLE_TABLE_NAME || "Feedback";
 
+const GOOGLE_SHEETS_ID = process.env.GOOGLE_SHEETS_ID || "";
+const GOOGLE_SHEET_NAME = process.env.GOOGLE_SHEET_NAME || "Feedback";
+const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
+const GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = (process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+
 type FeedbackRow = { timestamp: string; feedback: string };
 
-function csvPath() {
-  return path.join(process.cwd(), "data", "feedback.csv");
-}
+async function appendFeedbackGoogleSheets(feedback: string) {
+  if (!GOOGLE_SHEETS_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
+    throw new Error("Google Sheets service account not configured");
+  }
 
-async function appendFeedbackCsv(feedback: string) {
-  const file = csvPath();
-  const dir = path.dirname(file);
-  await fs.mkdir(dir, { recursive: true });
+  const auth = new google.auth.JWT({
+    email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    key: GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
+  const sheets = google.sheets({ version: "v4", auth });
+
   const ts = new Date().toISOString();
-  const escaped = '"' + feedback.replace(/"/g, '""') + '"';
-  const line = `${ts},${escaped}\n`;
-  await fs.appendFile(file, line, "utf8");
+
+  const res = await sheets.spreadsheets.values.append({
+    spreadsheetId: GOOGLE_SHEETS_ID,
+    range: `${GOOGLE_SHEET_NAME}!A:B`,
+    valueInputOption: "RAW",
+    requestBody: {
+      values: [[ts, feedback]],
+    },
+  });
+
+  if ((res.status || 200) >= 400) {
+    throw new Error(`Google Sheets append failed: ${res.status} ${JSON.stringify(res.data)}`);
+  }
 }
 
 async function appendFeedbackAirtable(feedback: string) {
@@ -51,25 +69,35 @@ async function appendFeedbackAirtable(feedback: string) {
   }
 }
 
-async function readFeedbackCsv(): Promise<FeedbackRow[]> {
+async function readFeedbackGoogleSheets(): Promise<FeedbackRow[]> {
   try {
-    const file = csvPath();
-    const content = await fs.readFile(file, "utf8");
-    const lines = content.split(/\r?\n/).filter(Boolean);
-    const items = lines
-      .map((line) => {
-        const commaIdx = line.indexOf(',');
-        if (commaIdx === -1) return null;
-        const ts = line.slice(0, commaIdx);
-        let fb = line.slice(commaIdx + 1);
-        if (fb.startsWith('"') && fb.endsWith('"')) {
-          fb = fb.slice(1, -1).replace(/""/g, '"');
-        }
-        return { timestamp: ts, feedback: fb };
-      })
-      .filter(Boolean) as FeedbackRow[];
-    return items.sort((a, b) => (a.timestamp > b.timestamp ? -1 : 1)).slice(0, 200);
-  } catch (_) {
+    if (!GOOGLE_SHEETS_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
+      return [];
+    }
+
+    const auth = new google.auth.JWT({
+      email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+      key: GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+      scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+    });
+    const sheets = google.sheets({ version: "v4", auth });
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEETS_ID,
+      range: `${GOOGLE_SHEET_NAME}!A:B`,
+    });
+
+    const rows = response.data.values || [];
+    const items = rows
+      .slice(1)
+      .map((row) => ({ timestamp: row[0] || "", feedback: row[1] || "" }))
+      .filter((item) => item.feedback)
+      .sort((a, b) => (a.timestamp > b.timestamp ? -1 : 1))
+      .slice(0, 200);
+
+    return items;
+  } catch (err: any) {
+    console.error("Google Sheets read error:", err?.message ?? err);
     return [];
   }
 }
@@ -104,7 +132,7 @@ export async function submitEarlyAccess(formData: FormData) {
     return { success: false, message: 'Please enter your feedback.' };
   }
 
-  // Prefer Airtable, fall back to local CSV
+  // Prefer Airtable, then Google Sheets
   if (AIRTABLE_BASE_ID && AIRTABLE_API_TOKEN) {
     try {
       await appendFeedbackAirtable(feedback);
@@ -118,13 +146,19 @@ export async function submitEarlyAccess(formData: FormData) {
   }
 
   try {
-    await appendFeedbackCsv(feedback);
+    await appendFeedbackGoogleSheets(feedback);
     return {
       success: true,
-      message: "Thank you! Saved locally (CSV fallback).",
+      message: "Thank you! Your feedback is saved.",
     };
   } catch (error: any) {
-    console.error("CSV save error:", error?.message ?? error);
+    console.error("Google Sheets save error:", error?.message ?? error);
+    if (error?.message?.includes("not configured")) {
+      return {
+        success: false,
+        message: "Google Sheets not configured. Please set service account env vars.",
+      };
+    }
     return {
       success: false,
       message: "Failed to save feedback. Please try again.",
@@ -132,13 +166,13 @@ export async function submitEarlyAccess(formData: FormData) {
   }
 }
 
-// Fetch stored feedback entries from Vercel Postgres or local CSV fallback
+// Fetch stored feedback entries from Airtable or Google Sheets
 export async function fetchFeedbackEntries() {
-  // Prefer Airtable, fall back to CSV
+  // Prefer Airtable, fall back to Google Sheets
   const airtableItems = await readFeedbackAirtable();
   if (airtableItems.length > 0) {
     return { success: true, source: "airtable", items: airtableItems };
   }
-  const csvItems = await readFeedbackCsv();
-  return { success: true, source: "csv", items: csvItems };
+  const googleSheetsItems = await readFeedbackGoogleSheets();
+  return { success: true, source: "google-sheets", items: googleSheetsItems };
 }
