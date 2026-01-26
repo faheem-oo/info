@@ -1,61 +1,75 @@
 'use server';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
-import { sql } from '@vercel/postgres';
+type FeedbackRow = { timestamp: string; feedback: string };
+
+function csvPath() {
+  return path.join(process.cwd(), 'data', 'feedback.csv');
+}
+
+async function appendFeedbackCsv(feedback: string) {
+  const file = csvPath();
+  const dir = path.dirname(file);
+  await fs.mkdir(dir, { recursive: true });
+  const ts = new Date().toISOString();
+  const escaped = '"' + feedback.replace(/"/g, '""') + '"';
+  const line = `${ts},${escaped}\n`;
+  await fs.appendFile(file, line, 'utf8');
+}
+
+async function readFeedbackCsv(): Promise<FeedbackRow[]> {
+  try {
+    const file = csvPath();
+    const content = await fs.readFile(file, 'utf8');
+    const lines = content.split(/\r?\n/).filter(Boolean);
+    const items = lines
+      .map((line) => {
+        const commaIdx = line.indexOf(',');
+        if (commaIdx === -1) return null;
+        const ts = line.slice(0, commaIdx);
+        let fb = line.slice(commaIdx + 1);
+        if (fb.startsWith('"') && fb.endsWith('"')) {
+          fb = fb.slice(1, -1).replace(/""/g, '"');
+        }
+        return { timestamp: ts, feedback: fb };
+      })
+      .filter(Boolean) as FeedbackRow[];
+    return items.sort((a, b) => (a.timestamp > b.timestamp ? -1 : 1)).slice(0, 200);
+  } catch (_) {
+    return [];
+  }
+}
 
 export async function submitEarlyAccess(formData: FormData) {
-  const feedback = formData.get('feedback') as string;
+  const feedback = (formData.get('feedback') as string) ?? '';
 
   if (!feedback || feedback.trim().length === 0) {
     return { success: false, message: 'Please enter your feedback.' };
   }
 
   try {
-    const result = await sql`
-      INSERT INTO feedback (feedback, created_at)
-      VALUES (${feedback}, NOW())
-      RETURNING id, feedback, created_at;
-    `;
-
-    console.log('Feedback submitted to Vercel Postgres:', result.rows[0]);
+    await appendFeedbackCsv(feedback);
+    console.log('Feedback appended to CSV:', csvPath());
     return {
       success: true,
-      message: "Thank you for your feedback! We appreciate your input."
+      message: 'Thank you for your feedback! (saved locally)'
     };
   } catch (error: any) {
-    console.error('Error submitting feedback:', error?.message ?? error);
+    console.error('Error saving feedback locally:', error?.message ?? error);
     return {
       success: false,
-      message: error?.message ? `Error: ${error.message}` : 'Something went wrong. Please try again.'
+      message: 'Failed to save feedback locally. Please try again.',
     };
   }
 }
 
-// Fetch stored feedback entries from Vercel Postgres
+// Fetch stored feedback entries from Vercel Postgres or local CSV fallback
 export async function fetchFeedbackEntries() {
-  try {
-    const result = await sql`
-      SELECT created_at, feedback
-      FROM feedback
-      ORDER BY created_at DESC
-      LIMIT 200;
-    `;
-
-    const items = (result.rows || []).map((item: any) => ({
-      timestamp: item.created_at,
-      feedback: item.feedback,
-    }));
-
-    return {
-      success: true,
-      source: 'vercel-postgres',
-      items,
-    };
-  } catch (error: any) {
-    console.error('Error fetching feedback:', error?.message ?? error);
-    return {
-      success: false,
-      items: [],
-      message: error?.message ?? 'Failed to load feedback.',
-    };
-  }
+  const items = await readFeedbackCsv();
+  return {
+    success: true,
+    source: 'csv',
+    items,
+  };
 }

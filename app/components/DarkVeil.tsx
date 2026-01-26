@@ -2,7 +2,16 @@ import React, { useEffect, useRef } from 'react';
 import { Renderer, Program, Mesh, Triangle } from 'ogl';
 import './DarkVeil.css';
 
-const hexToRgb = (hex) => {
+interface PlasmaProps {
+  color?: string;
+  speed?: number;
+  direction?: 'forward' | 'reverse' | 'pingpong';
+  scale?: number;
+  opacity?: number;
+  mouseInteractive?: boolean;
+}
+
+const hexToRgb = (hex: string): [number, number, number] => {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   if (!result) return [1, 0.5, 0.2];
   return [parseInt(result[1], 16) / 255, parseInt(result[2], 16) / 255, parseInt(result[3], 16) / 255];
@@ -80,7 +89,7 @@ void main() {
   fragColor = vec4(finalColor, alpha);
 }`;
 
-export const Plasma = ({
+const DarkVeil: React.FC<PlasmaProps> = ({
   color = '#ffffff',
   speed = 1,
   direction = 'forward',
@@ -88,7 +97,7 @@ export const Plasma = ({
   opacity = 1,
   mouseInteractive = true
 }) => {
-  const containerRef = useRef(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const mousePos = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
@@ -106,7 +115,7 @@ export const Plasma = ({
       dpr: Math.min(window.devicePixelRatio || 1, 2)
     });
     const gl = renderer.gl;
-    const canvas = gl.canvas;
+    const canvas = gl.canvas as HTMLCanvasElement;
     canvas.style.display = 'block';
     canvas.style.width = '100%';
     canvas.style.height = '100%';
@@ -133,12 +142,12 @@ export const Plasma = ({
 
     const mesh = new Mesh(gl, { geometry, program });
 
-    const handleMouseMove = (e) => {
+    const handleMouseMove = (e: MouseEvent) => {
       if (!mouseInteractive) return;
-      const rect = containerRef.current.getBoundingClientRect();
+      const rect = containerRef.current!.getBoundingClientRect();
       mousePos.current.x = e.clientX - rect.left;
       mousePos.current.y = e.clientY - rect.top;
-      const mouseUniform = program.uniforms.uMouse.value;
+      const mouseUniform = program.uniforms.uMouse.value as Float32Array;
       mouseUniform[0] = mousePos.current.x;
       mouseUniform[1] = mousePos.current.y;
     };
@@ -148,11 +157,11 @@ export const Plasma = ({
     }
 
     const setSize = () => {
-      const rect = containerRef.current.getBoundingClientRect();
+      const rect = containerRef.current!.getBoundingClientRect();
       const width = Math.max(1, Math.floor(rect.width));
       const height = Math.max(1, Math.floor(rect.height));
       renderer.setSize(width, height);
-      const res = program.uniforms.iResolution.value;
+      const res = program.uniforms.iResolution.value as Float32Array;
       res[0] = gl.drawingBufferWidth;
       res[1] = gl.drawingBufferHeight;
     };
@@ -163,7 +172,7 @@ export const Plasma = ({
 
     let raf = 0;
     const t0 = performance.now();
-    const loop = (t) => {
+    const loop = (t: number) => {
       let timeValue = (t - t0) * 0.001;
       if (direction === 'pingpong') {
         const pingpongDuration = 10;
@@ -172,10 +181,10 @@ export const Plasma = ({
         const u = segmentTime / pingpongDuration;
         const smooth = u * u * (3 - 2 * u);
         const pingpongTime = isForward ? smooth * pingpongDuration : (1 - smooth) * pingpongDuration;
-        program.uniforms.uDirection.value = 1.0;
-        program.uniforms.iTime.value = pingpongTime;
+        (program.uniforms.uDirection as any).value = 1.0;
+        (program.uniforms.iTime as any).value = pingpongTime;
       } else {
-        program.uniforms.iTime.value = timeValue;
+        (program.uniforms.iTime as any).value = timeValue;
       }
       renderer.render({ scene: mesh });
       raf = requestAnimationFrame(loop);
@@ -194,7 +203,7 @@ export const Plasma = ({
     };
   }, [color, speed, direction, scale, opacity, mouseInteractive]);
 
-  return <div ref={containerRef} className="plasma-container" />;
+  return <div ref={containerRef} className="darkveil-canvas" />;
 };
 
-export default Plasma;
+export default DarkVeil;

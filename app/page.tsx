@@ -27,7 +27,7 @@ export default function Home() {
       const res = await fetchFeedbackEntries();
       if (!res?.success) {
         setFeedbackItems([]);
-        setFeedbackError(res?.message ?? 'Failed to load feedback.');
+        setFeedbackError('Failed to load feedback.');
         return;
       }
       setFeedbackItems(res.items ?? []);

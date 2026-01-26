@@ -1,7 +1,7 @@
 import React from 'react';
 import styled from 'styled-components';
-// Import the TSX component (extension omitted so the bundler/resolver can pick .tsx)
-import DarkVeil from './DarkVeil';
+// Import the TSX component
+import DarkVeil from './DarkVeil.tsx';
 
 const CanvasContainer = styled.div`
   position: fixed;
