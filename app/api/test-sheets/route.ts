@@ -12,11 +12,14 @@ export async function GET() {
       serviceAccountJson = JSON.parse(fileContent);
     }
 
-    console.log('Using google.auth.fromJSON() method');
+    console.log('Using google.auth.JWT() method');
     
-    // Use the proper fromJSON method
-    const auth = google.auth.fromJSON(serviceAccountJson);
-    auth.scopes = ['https://www.googleapis.com/auth/spreadsheets'];
+    // Use JWT auth with proper scopes
+    const auth = new google.auth.JWT({
+      email: serviceAccountJson.client_email,
+      key: serviceAccountJson.private_key,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
     
     const sheets = google.sheets({ version: 'v4', auth });
     const spreadsheetId = '124oDjjq8KjiDLobMwFV_tRYXZV_WX8aR1Yeq21mFhSM';
