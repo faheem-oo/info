@@ -8,6 +8,19 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
+  // Optimize for production deployment
+  output: 'standalone',
+  // Enable React strict mode for better development experience
+  reactStrictMode: true,
+  // Configure server runtime
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '2mb',
+      allowedOrigins: ['info-zeta-ten.vercel.app', 'localhost:3000'],
+    },
+  },
+  // Optimize for SSR
+  swcMinify: true,
 };
 
 export default nextConfig;
