@@ -10,27 +10,9 @@ const AIRTABLE_TABLE_NAME = process.env.AIRTABLE_TABLE_NAME || "Feedback";
 const GOOGLE_SHEETS_ID = process.env.GOOGLE_SHEETS_ID || "";
 const GOOGLE_SHEET_NAME = process.env.GOOGLE_SHEET_NAME || "Employee Query Form";
 
-// Load service account from JSON file - MUST USE THIS
-let serviceAccount: any = null;
-let serviceAccountLoaded = false;
-try {
-  const serviceAccountPath = path.join(process.cwd(), "polar-winter-485505-h9-90c5a84fb5d4.json");
-  if (fs.existsSync(serviceAccountPath)) {
-    const fileContent = fs.readFileSync(serviceAccountPath, "utf-8");
-    serviceAccount = JSON.parse(fileContent);
-    serviceAccountLoaded = true;
-    console.log("✓ Service account loaded from JSON file successfully");
-  } else {
-    console.warn("⚠ Service account JSON file not found at:", serviceAccountPath);
-  }
-} catch (err) {
-  console.error("✗ Failed to load service account from file:", err);
-}
-
-// Use ONLY the JSON file credentials (most reliable)
-// Do NOT fallback to env vars for private key as they have encoding issues
-const GOOGLE_SERVICE_ACCOUNT_EMAIL = serviceAccount?.client_email || "";
-const GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = serviceAccount?.private_key || "";
+// Load service account from environment variables (works on Vercel)
+const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
+const GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = (process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || "").replace(/\\n/g, "\n");
 
 if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
   console.error("✗ Google Sheets credentials NOT properly loaded!");
@@ -111,24 +93,16 @@ async function appendFeedbackGoogleSheets(feedback: string) {
   }
 
   try {
-    // Load fresh from JSON for each request to ensure latest credentials
-    let serviceAccount: any = null;
-    const serviceAccountPath = path.join(process.cwd(), "polar-winter-485505-h9-90c5a84fb5d4.json");
-    if (fs.existsSync(serviceAccountPath)) {
-      const fileContent = fs.readFileSync(serviceAccountPath, "utf-8");
-      serviceAccount = JSON.parse(fileContent);
-    }
-
-    if (!serviceAccount) {
-      throw new Error("Service account not found");
+    if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
+      throw new Error("Google Sheets credentials not configured in environment variables");
     }
 
     console.log(`📝 Attempting to save feedback to sheet: "${GOOGLE_SHEET_NAME}"`);
-    console.log(`🔑 Using service account: ${serviceAccount.client_email}`);
+    console.log(`🔑 Using service account: ${GOOGLE_SERVICE_ACCOUNT_EMAIL}`);
 
     const auth = new google.auth.JWT({
-      email: serviceAccount.client_email,
-      key: serviceAccount.private_key,
+      email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+      key: GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
       scopes: ["https://www.googleapis.com/auth/spreadsheets"],
     });
     
@@ -195,21 +169,13 @@ async function readFeedbackGoogleSheets(): Promise<FeedbackRow[]> {
       return [];
     }
 
-    // Load fresh from JSON for each request
-    let serviceAccount: any = null;
-    const serviceAccountPath = path.join(process.cwd(), "polar-winter-485505-h9-90c5a84fb5d4.json");
-    if (fs.existsSync(serviceAccountPath)) {
-      const fileContent = fs.readFileSync(serviceAccountPath, "utf-8");
-      serviceAccount = JSON.parse(fileContent);
-    }
-
-    if (!serviceAccount) {
+    if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
       return [];
     }
 
     const auth = new google.auth.JWT({
-      email: serviceAccount.client_email,
-      key: serviceAccount.private_key,
+      email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+      key: GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
       scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
     });
     
@@ -328,21 +294,13 @@ async function deleteFeedbackGoogleSheets(rowIndex: number) {
     throw new Error("Google Sheets ID not configured");
   }
 
-  // Load fresh from JSON for each request
-  let serviceAccount: any = null;
-  const serviceAccountPath = path.join(process.cwd(), "polar-winter-485505-h9-90c5a84fb5d4.json");
-  if (fs.existsSync(serviceAccountPath)) {
-    const fileContent = fs.readFileSync(serviceAccountPath, "utf-8");
-    serviceAccount = JSON.parse(fileContent);
-  }
-
-  if (!serviceAccount) {
-    throw new Error("Service account not found");
+  if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
+    throw new Error("Google Sheets credentials not configured in environment variables");
   }
 
   const auth = new google.auth.JWT({
-    email: serviceAccount.client_email,
-    key: serviceAccount.private_key,
+    email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    key: GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
   

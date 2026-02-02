@@ -1,5 +1,9 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+# Service account credentials - NEVER commit these!
+polar-winter-485505-h9-*.json
+*.json.secret
+
 # dependencies
 /node_modules
 /.pnp
