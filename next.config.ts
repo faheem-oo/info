@@ -19,8 +19,6 @@ const nextConfig: NextConfig = {
       allowedOrigins: ['info-zeta-ten.vercel.app', 'localhost:3000'],
     },
   },
-  // Optimize for SSR
-  swcMinify: true,
 };
 
 export default nextConfig;

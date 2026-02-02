@@ -13,11 +13,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL('https://info-zeta-ten.vercel.app'),
   title: "Imitate Labs Issue Form",
   description: "Submit your issues and complaints anonymously to Imitate Labs",
   keywords: ["Imitate Labs", "feedback", "issue reporting", "anonymous feedback"],
   authors: [{ name: "Imitate Labs" }],
-  viewport: "width=device-width, initial-scale=1",
   icons: {
     icon: "/imitate-logo.png",
     shortcut: "/imitate-logo.png",
@@ -29,6 +29,11 @@ export const metadata: Metadata = {
     type: "website",
     images: ["/imitate-logo.png"],
   },
+};
+
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
 };
 
 export default function RootLayout({
