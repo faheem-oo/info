@@ -8,20 +8,32 @@ const AIRTABLE_API_TOKEN = process.env.AIRTABLE_API_TOKEN || "";
 const AIRTABLE_TABLE_NAME = process.env.AIRTABLE_TABLE_NAME || "Feedback";
 
 const GOOGLE_SHEETS_ID = process.env.GOOGLE_SHEETS_ID || "";
-const GOOGLE_SHEET_NAME = process.env.GOOGLE_SHEET_NAME || "Employee Query Form";
+const GOOGLE_SHEET_NAME = process.env.GOOGLE_SHEET_NAME || "Sheet1";
 
-// Load service account from environment variables (works on Vercel)
-const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
-const GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = (process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+// Load service account from JSON file (more reliable than env vars for private keys)
+let GOOGLE_SERVICE_ACCOUNT_EMAIL = "";
+let GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = "";
 
-if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
-  console.error("✗ Google Sheets credentials NOT properly loaded!");
-  console.error(`  - Email loaded: ${!!GOOGLE_SERVICE_ACCOUNT_EMAIL}`);
-  console.error(`  - Private key loaded: ${!!GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY}`);
-} else {
-  console.log("✓ Google Sheets credentials ready");
-  console.log(`  - Email: ${GOOGLE_SERVICE_ACCOUNT_EMAIL}`);
-  console.log(`  - Private key starts with: ${GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY.substring(0, 30)}`);
+try {
+  const serviceAccountPath = path.join(process.cwd(), "polar-winter-485505-h9-90c5a84fb5d4.json");
+  if (fs.existsSync(serviceAccountPath)) {
+    const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf-8"));
+    GOOGLE_SERVICE_ACCOUNT_EMAIL = serviceAccount.client_email;
+    GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = serviceAccount.private_key;
+    console.log("✓ Google Sheets credentials loaded from JSON file");
+    console.log(`  - Email: ${GOOGLE_SERVICE_ACCOUNT_EMAIL}`);
+  } else {
+    // Fallback to environment variables
+    GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
+    GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = (process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+    if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
+      console.error("✗ Google Sheets credentials NOT found!");
+    } else {
+      console.log("✓ Google Sheets credentials loaded from env");
+    }
+  }
+} catch (error) {
+  console.error("✗ Error loading Google Sheets credentials:", error);
 }
 
 type FeedbackRow = { timestamp: string; feedback: string };
