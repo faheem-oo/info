@@ -4,13 +4,11 @@ import { useEffect, useState } from 'react';
 import Image from "next/image";
 import DarkVeil from './components/DarkVeil';
 import EarlyAccessForm from './components/EarlyAccessForm';
+import FeedbackDisplay from './components/FeedbackDisplay';
 import { fetchFeedbackEntries } from './actions/formActions';
 
 export default function Home() {
   const [viewerOpen, setViewerOpen] = useState(false);
-  const [feedbackItems, setFeedbackItems] = useState<{ timestamp: string; feedback: string }[]>([]);
-  const [loadingFeedback, setLoadingFeedback] = useState(false);
-  const [feedbackError, setFeedbackError] = useState('');
 
   // Trigger the background animation after the form entrance animation finishes.
   useEffect(() => {
@@ -19,25 +17,6 @@ export default function Home() {
     }, 750); // match form animation (700ms in globals.css)
     return () => clearTimeout(t);
   }, []);
-
-  const handleViewFeedback = async () => {
-    setLoadingFeedback(true);
-    setFeedbackError('');
-    try {
-      const res = await fetchFeedbackEntries();
-      if (!res?.success) {
-        setFeedbackItems([]);
-        setFeedbackError('Failed to load feedback.');
-        return;
-      }
-      setFeedbackItems(res.items ?? []);
-      setViewerOpen(true);
-    } catch (err: any) {
-      setFeedbackError(err?.message ?? 'Failed to load feedback.');
-    } finally {
-      setLoadingFeedback(false);
-    }
-  };
 
   return (
     <div className="min-h-screen w-full flex flex-col items-center justify-start font-sans">
@@ -53,13 +32,11 @@ export default function Home() {
           <span className="text-lg font-bold text-white tracking-wide">IMITATE LABS</span>
         </div>
         <button
-          onClick={handleViewFeedback}
+          onClick={() => setViewerOpen(true)}
           className="text-sm font-semibold text-white px-4 py-2 rounded-full bg-white/10 border border-white/20 hover:bg-white/20 transition"
-          disabled={loadingFeedback}
         >
-          {loadingFeedback ? 'Loading...' : 'View Feedback'}
+          View Feedback
         </button>
-
       </nav>
 
       {/* Main Content */}
@@ -82,40 +59,7 @@ export default function Home() {
         </section>
       </main>
 
-      {viewerOpen && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center px-4 z-50">
-          <div className="w-full max-w-3xl bg-black/70 border border-white/10 rounded-2xl shadow-2xl p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xl font-semibold text-white">Submitted Feedback</h3>
-              <button
-                onClick={() => setViewerOpen(false)}
-                className="text-sm text-white/70 hover:text-white"
-              >
-                Close
-              </button>
-            </div>
-
-            {feedbackError && (
-              <div className="text-sm text-red-300 bg-red-900/40 border border-red-500/40 rounded-lg px-3 py-2">
-                {feedbackError}
-              </div>
-            )}
-
-            {feedbackItems.length === 0 && !feedbackError && (
-              <p className="text-white/70 text-sm">No feedback yet.</p>
-            )}
-
-            <div className="max-h-[60vh] overflow-y-auto space-y-3 pr-1">
-              {feedbackItems.map((item, idx) => (
-                <div key={`${item.timestamp}-${idx}`} className="bg-white/5 border border-white/10 rounded-lg p-3">
-                  <div className="text-xs text-white/50 mb-1">{new Date(item.timestamp).toLocaleString()}</div>
-                  <div className="text-sm text-white/90 whitespace-pre-wrap break-words">{item.feedback}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      <FeedbackDisplay isVisible={viewerOpen} onClose={() => setViewerOpen(false)} />
     </div>
   );
 }

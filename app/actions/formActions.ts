@@ -176,3 +176,84 @@ export async function fetchFeedbackEntries() {
   const googleSheetsItems = await readFeedbackGoogleSheets();
   return { success: true, source: "google-sheets", items: googleSheetsItems };
 }
+
+// Delete a feedback entry from Google Sheets
+async function deleteFeedbackGoogleSheets(rowIndex: number) {
+  if (!GOOGLE_SHEETS_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
+    throw new Error("Google Sheets service account not configured");
+  }
+
+  const auth = new google.auth.JWT({
+    email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    key: GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
+  const sheets = google.sheets({ version: "v4", auth });
+
+  // rowIndex is 1-based (header is row 1), so we add 1 to the display index
+  const sheetId = 0; // First sheet
+  const requests = [
+    {
+      deleteDimension: {
+        range: {
+          sheetId,
+          dimension: "ROWS",
+          startIndex: rowIndex,
+          endIndex: rowIndex + 1,
+        },
+      },
+    },
+  ];
+
+  const response = await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: GOOGLE_SHEETS_ID,
+    requestBody: { requests },
+  });
+
+  if ((response.status || 200) >= 400) {
+    throw new Error(`Google Sheets delete failed: ${response.status}`);
+  }
+}
+
+// Delete a feedback entry from Airtable
+async function deleteFeedbackAirtable(recordId: string) {
+  const url = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(
+    AIRTABLE_TABLE_NAME
+  )}/${recordId}`;
+  
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${AIRTABLE_API_TOKEN}`,
+    },
+  });
+  
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Airtable delete failed: ${res.status} ${text}`);
+  }
+}
+
+// Server action to delete feedback
+export async function deleteFeedback(recordId: string, source: "airtable" | "google-sheets") {
+  try {
+    if (source === "airtable") {
+      await deleteFeedbackAirtable(recordId);
+    } else {
+      // For Google Sheets, recordId should be the row index
+      const rowIndex = parseInt(recordId, 10);
+      await deleteFeedbackGoogleSheets(rowIndex);
+    }
+    
+    return {
+      success: true,
+      message: "Data deleted from the sheet.",
+    };
+  } catch (error: any) {
+    console.error("Delete feedback error:", error?.message ?? error);
+    return {
+      success: false,
+      message: "Failed to delete feedback. Please try again.",
+    };
+  }
+}
