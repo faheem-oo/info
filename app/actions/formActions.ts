@@ -1,7 +1,5 @@
 "use server";
 import { google } from "googleapis";
-import * as fs from "fs";
-import * as path from "path";
 
 const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || "";
 const AIRTABLE_API_TOKEN = process.env.AIRTABLE_API_TOKEN || "";
@@ -10,94 +8,11 @@ const AIRTABLE_TABLE_NAME = process.env.AIRTABLE_TABLE_NAME || "Feedback";
 const GOOGLE_SHEETS_ID = process.env.GOOGLE_SHEETS_ID || "";
 const GOOGLE_SHEET_NAME = process.env.GOOGLE_SHEET_NAME || "Sheet1";
 
-// Load service account from JSON file (more reliable than env vars for private keys)
-let GOOGLE_SERVICE_ACCOUNT_EMAIL = "";
-let GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = "";
-
-try {
-  const serviceAccountPath = path.join(process.cwd(), "polar-winter-485505-h9-90c5a84fb5d4.json");
-  if (fs.existsSync(serviceAccountPath)) {
-    const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf-8"));
-    GOOGLE_SERVICE_ACCOUNT_EMAIL = serviceAccount.client_email;
-    GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = serviceAccount.private_key;
-    console.log("✓ Google Sheets credentials loaded from JSON file");
-    console.log(`  - Email: ${GOOGLE_SERVICE_ACCOUNT_EMAIL}`);
-  } else {
-    // Fallback to environment variables
-    GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
-    GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = (process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || "").replace(/\\n/g, "\n");
-    if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
-      console.error("✗ Google Sheets credentials NOT found!");
-    } else {
-      console.log("✓ Google Sheets credentials loaded from env");
-    }
-  }
-} catch (error) {
-  console.error("✗ Error loading Google Sheets credentials:", error);
-}
+// Load credentials from environment variables (required for serverless deployment)
+const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
+const GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = (process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || "").replace(/\\n/g, "\n");
 
 type FeedbackRow = { timestamp: string; feedback: string };
-
-// CSV fallback: save to local file
-async function appendFeedbackCSV(feedback: string) {
-  try {
-    const dataDir = path.join(process.cwd(), "data");
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-
-    const filePath = path.join(dataDir, "feedback.csv");
-    const ts = new Date().toISOString();
-    
-    // Escape CSV values
-    const escapedFeedback = `"${feedback.replace(/"/g, '""')}"`;
-    const csvLine = `${ts},${escapedFeedback}\n`;
-
-    // Check if file exists, if not add header
-    if (!fs.existsSync(filePath)) {
-      fs.writeFileSync(filePath, "timestamp,feedback\n");
-    }
-
-    fs.appendFileSync(filePath, csvLine);
-    console.log("✅ Feedback saved to CSV file (local fallback)");
-  } catch (error: any) {
-    console.error("CSV save error:", error?.message);
-    throw error;
-  }
-}
-
-async function readFeedbackCSV(): Promise<FeedbackRow[]> {
-  try {
-    const filePath = path.join(process.cwd(), "data", "feedback.csv");
-    
-    if (!fs.existsSync(filePath)) {
-      return [];
-    }
-
-    const content = fs.readFileSync(filePath, "utf-8");
-    const lines = content.split("\n").filter((line) => line.trim());
-
-    if (lines.length <= 1) return []; // Only header or empty
-
-    return lines
-      .slice(1)
-      .map((line) => {
-        // Simple CSV parsing - assumes timestamp is ISO and feedback is quoted
-        const match = line.match(/^([^,]+),"(.*)"\s*$/);
-        if (!match) return null;
-        return {
-          timestamp: match[1],
-          feedback: match[2].replace(/""/g, '"'),
-        };
-      })
-      .filter((item): item is FeedbackRow => item !== null)
-      .sort((a, b) => (a.timestamp > b.timestamp ? -1 : 1))
-      .slice(0, 200);
-  } catch (error: any) {
-    console.error("CSV read error:", error?.message);
-    return [];
-  }
-}
 
 async function appendFeedbackGoogleSheets(feedback: string) {
   if (!GOOGLE_SHEETS_ID) {
@@ -243,7 +158,7 @@ export async function submitEarlyAccess(formData: FormData) {
     return { success: false, message: 'Please enter your feedback.' };
   }
 
-  // Prefer Airtable, then Google Sheets, then CSV fallback
+  // Prefer Airtable, then Google Sheets
   if (AIRTABLE_BASE_ID && AIRTABLE_API_TOKEN) {
     try {
       await appendFeedbackAirtable(feedback);
@@ -257,35 +172,31 @@ export async function submitEarlyAccess(formData: FormData) {
   }
 
   // Try Google Sheets
-  try {
-    await appendFeedbackGoogleSheets(feedback);
-    return {
-      success: true,
-      message: "Thank you! Your feedback is saved.",
-    };
-  } catch (error: any) {
-    console.error("Google Sheets save error:", error?.message ?? error);
+  if (GOOGLE_SHEETS_ID && GOOGLE_SERVICE_ACCOUNT_EMAIL && GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
+    try {
+      await appendFeedbackGoogleSheets(feedback);
+      return {
+        success: true,
+        message: "Thank you! Your feedback is saved.",
+      };
+    } catch (error: any) {
+      console.error("Google Sheets save error:", error?.message ?? error);
+      return {
+        success: false,
+        message: "Failed to save feedback. Please check configuration.",
+      };
+    }
   }
 
-  // Fallback to CSV
-  try {
-    await appendFeedbackCSV(feedback);
-    return {
-      success: true,
-      message: "Thank you! Your feedback is saved.",
-    };
-  } catch (error: any) {
-    console.error("CSV save error:", error?.message ?? error);
-    return {
-      success: false,
-      message: "Failed to save feedback. Please try again.",
-    };
-  }
+  return {
+    success: false,
+    message: "No storage backend configured. Please contact support.",
+  };
 }
 
-// Fetch stored feedback entries from Airtable, Google Sheets, or CSV
+// Fetch stored feedback entries from Airtable or Google Sheets
 export async function fetchFeedbackEntries() {
-  // Prefer Airtable, fall back to Google Sheets, then CSV
+  // Prefer Airtable, fall back to Google Sheets
   const airtableItems = await readFeedbackAirtable();
   if (airtableItems.length > 0) {
     return { success: true, source: "airtable", items: airtableItems };
@@ -296,8 +207,7 @@ export async function fetchFeedbackEntries() {
     return { success: true, source: "google-sheets", items: googleSheetsItems };
   }
   
-  const csvItems = await readFeedbackCSV();
-  return { success: true, source: "csv", items: csvItems };
+  return { success: true, source: "none", items: [] };
 }
 
 // Delete a feedback entry from Google Sheets
