@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { fetchFeedbackEntries } from '../actions/formActions';
+import { fetchFeedbackEntries, deleteFeedback } from '../actions/formActions';
 
 interface FeedbackItem {
   timestamp: string;
   feedback: string;
+  recordId?: string;
 }
 
 interface FeedbackDisplayProps {
@@ -16,6 +17,8 @@ interface FeedbackDisplayProps {
 export default function FeedbackDisplay({ isVisible, onClose }: FeedbackDisplayProps) {
   const [feedbackItems, setFeedbackItems] = useState<FeedbackItem[]>([]);
   const [showDeleteMessage, setShowDeleteMessage] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [source, setSource] = useState<"airtable" | "google-sheets">("google-sheets");
   const previousCountRef = useRef<number>(0);
 
   useEffect(() => {
@@ -31,7 +34,11 @@ export default function FeedbackDisplay({ isVisible, onClose }: FeedbackDisplayP
             setShowDeleteMessage(true);
           }
 
-          setFeedbackItems(result.items);
+          setFeedbackItems(result.items.map((item: any, idx: number) => ({
+            ...item,
+            recordId: result.source === "airtable" ? item.recordId : (idx + 1).toString(),
+          })));
+          setSource(result.source as "airtable" | "google-sheets");
           previousCountRef.current = currentCount;
         }
       } catch (error) {
@@ -51,6 +58,29 @@ export default function FeedbackDisplay({ isVisible, onClose }: FeedbackDisplayP
 
     return () => clearInterval(interval);
   }, [isVisible]);
+
+  const handleDelete = async (recordId: string | undefined, idx: number) => {
+    if (!recordId) {
+      console.error('Record ID is missing');
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      const result = await deleteFeedback(recordId, source);
+      if (result.success) {
+        setFeedbackItems(feedbackItems.filter((_, i) => i !== idx));
+        setShowDeleteMessage(true);
+      } else {
+        alert(result.message || 'Failed to delete feedback');
+      }
+    } catch (error) {
+      console.error('Error deleting feedback:', error);
+      alert('An error occurred while deleting feedback');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   if (!isVisible) return null;
 
@@ -83,8 +113,12 @@ export default function FeedbackDisplay({ isVisible, onClose }: FeedbackDisplayP
         <div className="max-h-[60vh] overflow-y-auto space-y-3 pr-1">
           {feedbackItems.map((item, idx) => (
             <div key={`${item.timestamp}-${idx}`} className="bg-white/5 border border-white/10 rounded-lg p-3">
-              <div className="text-xs text-white/50 mb-1">{new Date(item.timestamp).toLocaleString()}</div>
-              <div className="text-sm text-white/90 whitespace-pre-wrap break-words">{item.feedback}</div>
+              <div className="flex justify-between items-start gap-3">
+                <div className="flex-1">
+                  <div className="text-xs text-white/50 mb-1">{new Date(item.timestamp).toLocaleString()}</div>
+                  <div className="text-sm text-white/90 whitespace-pre-wrap break-words">{item.feedback}</div>
+                </div>
+              </div>
             </div>
           ))}
         </div>

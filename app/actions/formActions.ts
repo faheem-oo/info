@@ -1,42 +1,162 @@
 "use server";
 import { google } from "googleapis";
+import * as fs from "fs";
+import * as path from "path";
 
 const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || "";
 const AIRTABLE_API_TOKEN = process.env.AIRTABLE_API_TOKEN || "";
 const AIRTABLE_TABLE_NAME = process.env.AIRTABLE_TABLE_NAME || "Feedback";
 
 const GOOGLE_SHEETS_ID = process.env.GOOGLE_SHEETS_ID || "";
-const GOOGLE_SHEET_NAME = process.env.GOOGLE_SHEET_NAME || "Feedback";
-const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
-const GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = (process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+const GOOGLE_SHEET_NAME = process.env.GOOGLE_SHEET_NAME || "Employee Query Form";
+
+// Load service account from JSON file - MUST USE THIS
+let serviceAccount: any = null;
+let serviceAccountLoaded = false;
+try {
+  const serviceAccountPath = path.join(process.cwd(), "polar-winter-485505-h9-90c5a84fb5d4.json");
+  if (fs.existsSync(serviceAccountPath)) {
+    const fileContent = fs.readFileSync(serviceAccountPath, "utf-8");
+    serviceAccount = JSON.parse(fileContent);
+    serviceAccountLoaded = true;
+    console.log("✓ Service account loaded from JSON file successfully");
+  } else {
+    console.warn("⚠ Service account JSON file not found at:", serviceAccountPath);
+  }
+} catch (err) {
+  console.error("✗ Failed to load service account from file:", err);
+}
+
+// Use ONLY the JSON file credentials (most reliable)
+// Do NOT fallback to env vars for private key as they have encoding issues
+const GOOGLE_SERVICE_ACCOUNT_EMAIL = serviceAccount?.client_email || "";
+const GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = serviceAccount?.private_key || "";
+
+if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
+  console.error("✗ Google Sheets credentials NOT properly loaded!");
+  console.error(`  - Email loaded: ${!!GOOGLE_SERVICE_ACCOUNT_EMAIL}`);
+  console.error(`  - Private key loaded: ${!!GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY}`);
+} else {
+  console.log("✓ Google Sheets credentials ready");
+  console.log(`  - Email: ${GOOGLE_SERVICE_ACCOUNT_EMAIL}`);
+  console.log(`  - Private key starts with: ${GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY.substring(0, 30)}`);
+}
 
 type FeedbackRow = { timestamp: string; feedback: string };
 
+// CSV fallback: save to local file
+async function appendFeedbackCSV(feedback: string) {
+  try {
+    const dataDir = path.join(process.cwd(), "data");
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+
+    const filePath = path.join(dataDir, "feedback.csv");
+    const ts = new Date().toISOString();
+    
+    // Escape CSV values
+    const escapedFeedback = `"${feedback.replace(/"/g, '""')}"`;
+    const csvLine = `${ts},${escapedFeedback}\n`;
+
+    // Check if file exists, if not add header
+    if (!fs.existsSync(filePath)) {
+      fs.writeFileSync(filePath, "timestamp,feedback\n");
+    }
+
+    fs.appendFileSync(filePath, csvLine);
+    console.log("✅ Feedback saved to CSV file (local fallback)");
+  } catch (error: any) {
+    console.error("CSV save error:", error?.message);
+    throw error;
+  }
+}
+
+async function readFeedbackCSV(): Promise<FeedbackRow[]> {
+  try {
+    const filePath = path.join(process.cwd(), "data", "feedback.csv");
+    
+    if (!fs.existsSync(filePath)) {
+      return [];
+    }
+
+    const content = fs.readFileSync(filePath, "utf-8");
+    const lines = content.split("\n").filter((line) => line.trim());
+
+    if (lines.length <= 1) return []; // Only header or empty
+
+    return lines
+      .slice(1)
+      .map((line) => {
+        // Simple CSV parsing - assumes timestamp is ISO and feedback is quoted
+        const match = line.match(/^([^,]+),"(.*)"\s*$/);
+        if (!match) return null;
+        return {
+          timestamp: match[1],
+          feedback: match[2].replace(/""/g, '"'),
+        };
+      })
+      .filter((item): item is FeedbackRow => item !== null)
+      .sort((a, b) => (a.timestamp > b.timestamp ? -1 : 1))
+      .slice(0, 200);
+  } catch (error: any) {
+    console.error("CSV read error:", error?.message);
+    return [];
+  }
+}
+
 async function appendFeedbackGoogleSheets(feedback: string) {
-  if (!GOOGLE_SHEETS_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
-    throw new Error("Google Sheets service account not configured");
+  if (!GOOGLE_SHEETS_ID) {
+    throw new Error("Google Sheets ID not configured");
   }
 
-  const auth = new google.auth.JWT({
-    email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    key: GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-  const sheets = google.sheets({ version: "v4", auth });
+  try {
+    // Load fresh from JSON for each request to ensure latest credentials
+    let serviceAccount: any = null;
+    const serviceAccountPath = path.join(process.cwd(), "polar-winter-485505-h9-90c5a84fb5d4.json");
+    if (fs.existsSync(serviceAccountPath)) {
+      const fileContent = fs.readFileSync(serviceAccountPath, "utf-8");
+      serviceAccount = JSON.parse(fileContent);
+    }
 
-  const ts = new Date().toISOString();
+    if (!serviceAccount) {
+      throw new Error("Service account not found");
+    }
 
-  const res = await sheets.spreadsheets.values.append({
-    spreadsheetId: GOOGLE_SHEETS_ID,
-    range: `${GOOGLE_SHEET_NAME}!A:B`,
-    valueInputOption: "RAW",
-    requestBody: {
-      values: [[ts, feedback]],
-    },
-  });
+    console.log(`📝 Attempting to save feedback to sheet: "${GOOGLE_SHEET_NAME}"`);
+    console.log(`🔑 Using service account: ${serviceAccount.client_email}`);
 
-  if ((res.status || 200) >= 400) {
-    throw new Error(`Google Sheets append failed: ${res.status} ${JSON.stringify(res.data)}`);
+    const auth = new google.auth.JWT({
+      email: serviceAccount.client_email,
+      key: serviceAccount.private_key,
+      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+    });
+    
+    const sheets = google.sheets({ version: "v4", auth });
+    const ts = new Date().toISOString();
+
+    const res = await sheets.spreadsheets.values.append({
+      spreadsheetId: GOOGLE_SHEETS_ID,
+      range: `${GOOGLE_SHEET_NAME}!A:B`,
+      valueInputOption: "RAW",
+      requestBody: {
+        values: [[ts, feedback]],
+      },
+    });
+
+    console.log(`✅ Feedback saved successfully to Google Sheets`);
+
+    if ((res.status || 200) < 200 || (res.status || 200) >= 400) {
+      throw new Error(`Google Sheets append failed: ${res.status} ${JSON.stringify(res.data)}`);
+    }
+  } catch (error: any) {
+    console.error("❌ Google Sheets save error:", {
+      message: error?.message,
+      code: error?.code,
+      status: error?.status,
+      details: error?.errors?.[0]?.message,
+    });
+    throw error;
   }
 }
 
@@ -71,15 +191,28 @@ async function appendFeedbackAirtable(feedback: string) {
 
 async function readFeedbackGoogleSheets(): Promise<FeedbackRow[]> {
   try {
-    if (!GOOGLE_SHEETS_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
+    if (!GOOGLE_SHEETS_ID) {
+      return [];
+    }
+
+    // Load fresh from JSON for each request
+    let serviceAccount: any = null;
+    const serviceAccountPath = path.join(process.cwd(), "polar-winter-485505-h9-90c5a84fb5d4.json");
+    if (fs.existsSync(serviceAccountPath)) {
+      const fileContent = fs.readFileSync(serviceAccountPath, "utf-8");
+      serviceAccount = JSON.parse(fileContent);
+    }
+
+    if (!serviceAccount) {
       return [];
     }
 
     const auth = new google.auth.JWT({
-      email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      key: GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+      email: serviceAccount.client_email,
+      key: serviceAccount.private_key,
       scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
     });
+    
     const sheets = google.sheets({ version: "v4", auth });
 
     const response = await sheets.spreadsheets.values.get({
@@ -132,7 +265,7 @@ export async function submitEarlyAccess(formData: FormData) {
     return { success: false, message: 'Please enter your feedback.' };
   }
 
-  // Prefer Airtable, then Google Sheets
+  // Prefer Airtable, then Google Sheets, then CSV fallback
   if (AIRTABLE_BASE_ID && AIRTABLE_API_TOKEN) {
     try {
       await appendFeedbackAirtable(feedback);
@@ -145,6 +278,7 @@ export async function submitEarlyAccess(formData: FormData) {
     }
   }
 
+  // Try Google Sheets
   try {
     await appendFeedbackGoogleSheets(feedback);
     return {
@@ -153,12 +287,17 @@ export async function submitEarlyAccess(formData: FormData) {
     };
   } catch (error: any) {
     console.error("Google Sheets save error:", error?.message ?? error);
-    if (error?.message?.includes("not configured")) {
-      return {
-        success: false,
-        message: "Google Sheets not configured. Please set service account env vars.",
-      };
-    }
+  }
+
+  // Fallback to CSV
+  try {
+    await appendFeedbackCSV(feedback);
+    return {
+      success: true,
+      message: "Thank you! Your feedback is saved.",
+    };
+  } catch (error: any) {
+    console.error("CSV save error:", error?.message ?? error);
     return {
       success: false,
       message: "Failed to save feedback. Please try again.",
@@ -166,31 +305,51 @@ export async function submitEarlyAccess(formData: FormData) {
   }
 }
 
-// Fetch stored feedback entries from Airtable or Google Sheets
+// Fetch stored feedback entries from Airtable, Google Sheets, or CSV
 export async function fetchFeedbackEntries() {
-  // Prefer Airtable, fall back to Google Sheets
+  // Prefer Airtable, fall back to Google Sheets, then CSV
   const airtableItems = await readFeedbackAirtable();
   if (airtableItems.length > 0) {
     return { success: true, source: "airtable", items: airtableItems };
   }
+  
   const googleSheetsItems = await readFeedbackGoogleSheets();
-  return { success: true, source: "google-sheets", items: googleSheetsItems };
+  if (googleSheetsItems.length > 0) {
+    return { success: true, source: "google-sheets", items: googleSheetsItems };
+  }
+  
+  const csvItems = await readFeedbackCSV();
+  return { success: true, source: "csv", items: csvItems };
 }
 
 // Delete a feedback entry from Google Sheets
 async function deleteFeedbackGoogleSheets(rowIndex: number) {
-  if (!GOOGLE_SHEETS_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
-    throw new Error("Google Sheets service account not configured");
+  if (!GOOGLE_SHEETS_ID) {
+    throw new Error("Google Sheets ID not configured");
+  }
+
+  // Load fresh from JSON for each request
+  let serviceAccount: any = null;
+  const serviceAccountPath = path.join(process.cwd(), "polar-winter-485505-h9-90c5a84fb5d4.json");
+  if (fs.existsSync(serviceAccountPath)) {
+    const fileContent = fs.readFileSync(serviceAccountPath, "utf-8");
+    serviceAccount = JSON.parse(fileContent);
+  }
+
+  if (!serviceAccount) {
+    throw new Error("Service account not found");
   }
 
   const auth = new google.auth.JWT({
-    email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    key: GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+    email: serviceAccount.client_email,
+    key: serviceAccount.private_key,
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
+  
   const sheets = google.sheets({ version: "v4", auth });
 
-  // rowIndex is 1-based (header is row 1), so we add 1 to the display index
+  // rowIndex is 1-based from display, Google Sheets API needs 0-based startIndex
+  // Header is row 0, so data row 1 has startIndex 1
   const sheetId = 0; // First sheet
   const requests = [
     {
@@ -210,10 +369,11 @@ async function deleteFeedbackGoogleSheets(rowIndex: number) {
     requestBody: { requests },
   });
 
-  if ((response.status || 200) >= 400) {
+  if ((response.status || 200) < 200 || (response.status || 200) >= 400) {
     throw new Error(`Google Sheets delete failed: ${response.status}`);
   }
 }
+
 
 // Delete a feedback entry from Airtable
 async function deleteFeedbackAirtable(recordId: string) {
